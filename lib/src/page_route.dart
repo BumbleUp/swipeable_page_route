@@ -208,6 +208,8 @@ class SwipeablePageRoute<T> extends CupertinoPageRoute<T> {
   ) {
     return _CupertinoBackGestureController<T>(
       navigator: route.navigator!,
+      getIsCurrent: () => route.isCurrent,
+      getIsActive: () => route.isActive,
       controller: route.controller!, // protected access
     );
   }
@@ -382,13 +384,8 @@ extension BuildContextSwipeablePageRoute on BuildContext {
 
 const double _kMinFlingVelocity = 1; // Screen widths per second.
 
-// An eyeballed value for the maximum time it takes for a page to animate
-// forward if the user releases a page mid swipe.
-const int _kMaxDroppedSwipePageForwardAnimationTime = 800; // Milliseconds.
-
-// The maximum time for a page to get reset to it's original position if the
-// user releases a page mid swipe.
-const int _kMaxPageBackAnimationTime = 300; // Milliseconds.
+// The duration for a page to animate (back or forward) when the user releases it mid-swipe.
+const Duration _kDroppedSwipePageAnimationDuration = Duration(milliseconds: 150);
 
 // An adapted version of `_CupertinoBackGestureDetector`.
 class _FancyBackGestureDetector<T> extends StatefulWidget {
@@ -516,12 +513,16 @@ class _CupertinoBackGestureController<T> {
   _CupertinoBackGestureController({
     required this.navigator,
     required this.controller,
+    required this.getIsActive,
+    required this.getIsCurrent,
   }) {
     navigator.didStartUserGesture();
   }
 
   final AnimationController controller;
   final NavigatorState navigator;
+  final ValueGetter<bool> getIsActive;
+  final ValueGetter<bool> getIsCurrent;
 
   /// The drag gesture has changed by [delta]. The total range of the
   /// drag should be 0.0 to 1.0.
@@ -533,58 +534,50 @@ class _CupertinoBackGestureController<T> {
   /// fraction of screen width per second.
   void dragEnd(double velocity) {
     // Fling in the appropriate direction.
-    // AnimationController.fling is guaranteed to
-    // take at least one frame.
     //
-    // This curve has been determined through rigorously eyeballing native iOS
-    // animations.
-    const Curve animationCurve = Curves.fastLinearToSlowEaseIn;
+    // iOS uses a curve similar to fastEaseInToSlowEaseOut. This curve has been
+    // determined through rigorously eyeballing native iOS animations.
+    // The curve eases out extremely slowly, causing pointer events to remain blocked
+    // until completion - even though the animation appears visually finished.
+    // It was replaced with a decelerate curve to complete the animation faster.
+    const Curve animationCurve = Curves.decelerate;
+    final bool isCurrent = getIsCurrent();
     final bool animateForward;
 
-    // If the user releases the page before mid screen with sufficient velocity,
-    // or after mid screen, we should animate the page out. Otherwise, the page
-    // should be animated back in.
-    if (velocity.abs() >= _kMinFlingVelocity) {
+    if (!isCurrent) {
+      // If the page has already been navigated away from, then the animation
+      // direction depends on whether or not it's still in the navigation stack,
+      // regardless of velocity or drag position. For example, if a route is
+      // being slowly dragged back by just a few pixels, but then a programmatic
+      // pop occurs, the route should still be animated off the screen.
+      // See https://github.com/flutter/flutter/issues/141268.
+      animateForward = getIsActive();
+    } else if (velocity.abs() >= _kMinFlingVelocity) {
+      // If the user releases the page before mid screen with sufficient velocity,
+      // or after mid screen, we should animate the page out. Otherwise, the page
+      // should be animated back in.
       animateForward = velocity <= 0;
     } else {
       animateForward = controller.value > 0.5;
     }
 
     if (animateForward) {
-      // The closer the panel is to dismissing, the shorter the animation is.
-      // We want to cap the animation time, but we want to use a linear curve
-      // to determine it.
-      final droppedPageForwardAnimationTime = math.min(
-        lerpDouble(
-          _kMaxDroppedSwipePageForwardAnimationTime,
-          0,
-          controller.value,
-        )!
-            .floor(),
-        _kMaxPageBackAnimationTime,
-      );
       controller.animateTo(
-        1,
-        duration: Duration(milliseconds: droppedPageForwardAnimationTime),
+        1.0,
+        duration: _kDroppedSwipePageAnimationDuration,
         curve: animationCurve,
       );
     } else {
-      // This route is destined to pop at this point. Reuse navigator's pop.
-      navigator.pop();
+      if (isCurrent) {
+        // This route is destined to pop at this point. Reuse navigator's pop.
+        navigator.pop();
+      }
 
-      // The popping may have finished inline if already at the target
-      // destination.
+      // The popping may have finished inline if already at the target destination.
       if (controller.isAnimating) {
-        // Otherwise, use a custom popping animation duration and curve.
-        final droppedPageBackAnimationTime = lerpDouble(
-          0,
-          _kMaxDroppedSwipePageForwardAnimationTime,
-          controller.value,
-        )!
-            .floor();
         controller.animateBack(
-          0,
-          duration: Duration(milliseconds: droppedPageBackAnimationTime),
+          0.0,
+          duration: _kDroppedSwipePageAnimationDuration,
           curve: animationCurve,
         );
       }
@@ -595,7 +588,7 @@ class _CupertinoBackGestureController<T> {
       // curve of the page transition mid-flight since CupertinoPageTransition
       // depends on userGestureInProgress.
       late AnimationStatusListener animationStatusCallback;
-      animationStatusCallback = (status) {
+      animationStatusCallback = (AnimationStatus status) {
         navigator.didStopUserGesture();
         controller.removeStatusListener(animationStatusCallback);
       };
