@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' show lerpDouble;
 
 import 'package:black_hole_flutter/black_hole_flutter.dart';
 import 'package:flutter/cupertino.dart';
@@ -467,7 +466,7 @@ class _FancyBackGestureDetectorState<T>
     assert(mounted);
     assert(_backGestureController != null);
     _backGestureController!.dragUpdate(
-      _convertToLogical(details.primaryDelta! / context.size!.width),
+      _convertToLogical(details.delta.dx / context.size!.width),
     );
   }
 
@@ -475,11 +474,19 @@ class _FancyBackGestureDetectorState<T>
     assert(mounted);
     assert(_backGestureController != null);
     _backGestureController!.dragEnd(
-      _convertToLogical(
-        details.velocity.pixelsPerSecond.dx / context.size!.width,
-      ),
+      _isHorizontalEnough(details)
+          ? _convertToLogical(
+              details.velocity.pixelsPerSecond.dx / context.size!.width,
+            )
+          : 0,
     );
     _backGestureController = null;
+  }
+
+  bool _isHorizontalEnough(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond;
+
+    return velocity.dx.abs() > velocity.dy.abs();
   }
 
   void _handleDragCancel() {
@@ -600,7 +607,7 @@ class _CupertinoBackGestureController<T> {
 }
 
 class _DirectionDependentDragGestureRecognizer
-    extends HorizontalDragGestureRecognizer {
+    extends PanGestureRecognizer {
   _DirectionDependentDragGestureRecognizer({
     required this.directionality,
     required this.enabledCallback,
