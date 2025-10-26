@@ -384,7 +384,8 @@ extension BuildContextSwipeablePageRoute on BuildContext {
 const double _kMinFlingVelocity = 1; // Screen widths per second.
 
 // The duration for a page to animate (back or forward) when the user releases it mid-swipe.
-const Duration _kDroppedSwipePageAnimationDuration = Duration(milliseconds: 150);
+// Full animation duration to calculate proportional timing based on position.
+const Duration _kDroppedSwipePageAnimationDuration = Duration(milliseconds: 500);
 
 // An adapted version of `_CupertinoBackGestureDetector`.
 class _FancyBackGestureDetector<T> extends StatefulWidget {
@@ -549,7 +550,7 @@ class _CupertinoBackGestureController<T> {
     // It was replaced with a decelerate curve to complete the animation faster.
     const Curve animationCurve = Curves.decelerate;
     final bool isCurrent = getIsCurrent();
-    final bool animateForward;
+    final bool shouldReverse;
 
     if (!isCurrent) {
       // If the page has already been navigated away from, then the animation
@@ -558,20 +559,28 @@ class _CupertinoBackGestureController<T> {
       // being slowly dragged back by just a few pixels, but then a programmatic
       // pop occurs, the route should still be animated off the screen.
       // See https://github.com/flutter/flutter/issues/141268.
-      animateForward = getIsActive();
+      shouldReverse = getIsActive();
     } else if (velocity.abs() >= _kMinFlingVelocity) {
       // If the user releases the page before mid screen with sufficient velocity,
       // or after mid screen, we should animate the page out. Otherwise, the page
       // should be animated back in.
-      animateForward = velocity <= 0;
+      shouldReverse = velocity <= 0;
     } else {
-      animateForward = controller.value > 0.5;
+      shouldReverse = controller.value > 0.5;
     }
 
-    if (animateForward) {
+    // Computes animation duration scaling between minScaleFactor and 0.5.
+    const minScaleFactor = 0.2;
+    final distance = shouldReverse ? 1.0 - controller.value : controller.value;
+    final scaleFactor = minScaleFactor + (1 - 2 * minScaleFactor) * distance;
+    final animationDuration = Duration(milliseconds:
+      (scaleFactor * _kDroppedSwipePageAnimationDuration.inMilliseconds).round(),
+    );
+
+    if (shouldReverse) {
       controller.animateTo(
         1.0,
-        duration: _kDroppedSwipePageAnimationDuration,
+        duration: animationDuration,
         curve: animationCurve,
       );
     } else {
@@ -584,7 +593,7 @@ class _CupertinoBackGestureController<T> {
       if (controller.isAnimating) {
         controller.animateBack(
           0.0,
-          duration: _kDroppedSwipePageAnimationDuration,
+          duration: animationDuration,
           curve: animationCurve,
         );
       }
