@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:black_hole_flutter/black_hole_flutter.dart';
@@ -584,19 +585,16 @@ class _CupertinoBackGestureController<T> {
         curve: animationCurve,
       );
     } else {
-      if (isCurrent) {
-        // This route is destined to pop at this point. Reuse navigator's pop.
-        navigator.pop();
-      }
-
-      // The popping may have finished inline if already at the target destination.
-      if (controller.isAnimating) {
-        controller.animateBack(
-          0.0,
-          duration: animationDuration,
-          curve: animationCurve,
-        );
-      }
+      unawaited(controller.animateBack(
+        0.0,
+        duration: animationDuration,
+        curve: animationCurve,
+      ).then((_) {
+        if (isCurrent) {
+          // Pop after animation to ensure consistent mid-drop transition.
+          navigator.pop();
+        }
+      }));
     }
 
     if (controller.isAnimating) {
